@@ -2,16 +2,7 @@
 #include <Adafruit_NeoPixel.h>
 #include <QTRSensors.h>
 #include <AS5600.h>
-
-float Kp = 0.5; 
-float Ki = 0.0;  
-float Kd = 5;
-float MaxSpeed = 80; 
-float BaseSpeed = 50;
-float TurnSpeed = 70;
-float lost_threshold = 450;
-float LeftEncoderStatus = 0;
-float RightEncoderStatus = 0;
+#include "NimBLEDevice.h"
 
 #define SDA_1 17
 #define SCL_1 15
@@ -28,6 +19,31 @@ float RightEncoderStatus = 0;
 #define RIGHT_MOTOR_BACKWARD 13
 #define NEOPIXEL_PIN 48
 #define NUM_PIXELS 1
+
+#define DEVICE_NAME "LineFollower"
+
+float Kp = 0.5; 
+float Ki = 0.0;  
+float Kd = 5;
+float MaxSpeed = 80; 
+float BaseSpeed = 50;
+float TurnSpeed = 70;
+
+static NimBLEServer* pServer;
+NimBLECharacteristic* kpChar;
+NimBLECharacteristic* kiChar;
+NimBLECharacteristic* kdChar;
+NimBLECharacteristic* baseSpeedChar;
+NimBLECharacteristic* maxSpeedChar;
+NimBLECharacteristic* turnSpeedChar;
+NimBLECharacteristic* sensorDataChar;
+NimBLECharacteristic* positionChar;
+NimBLECharacteristic* calibrateChar;
+NimBLECharacteristic* startStopChar;
+
+float lost_threshold = 450;
+float LeftEncoderStatus = 0;
+float RightEncoderStatus = 0;
 
 TwoWire I2C_1(0);
 TwoWire I2C_2(1);
@@ -59,6 +75,47 @@ void setMotor(int pwm, int in1, int in2) {
   }
 }
 
+void setupBLE() {
+    NimBLEDevice::init(DEVICE_NAME);
+    NimBLEDevice::setMTU(517);
+    NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+    NimBLEDevice::setSecurityAuth(true, true, true);
+    NimBLEDevice::setSecurityPasskey(123456);
+    NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_YESNO);
+
+    pServer = NimBLEDevice::createServer();
+    // pServer->setCallbacks(&serverCallbacks);
+    NimBLEService* pService = pServer->createService("12345678-1234-1234-1234-1234567890ab");
+
+    kpChar = pService->createCharacteristic("0001", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+    kiChar = pService->createCharacteristic("0002", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+    kdChar = pService->createCharacteristic("0003", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+    baseSpeedChar = pService->createCharacteristic("0004", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+    maxSpeedChar = pService->createCharacteristic("0005", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+    turnSpeedChar = pService->createCharacteristic("0006", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+    sensorDataChar = pService->createCharacteristic("0007", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+    positionChar = pService->createCharacteristic("0008", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+
+    calibrateChar = pService->createCharacteristic("0009", NIMBLE_PROPERTY::WRITE);
+    startStopChar = pService->createCharacteristic("000A", NIMBLE_PROPERTY::WRITE);
+
+    kpChar->setValue(std::to_string(Kp));
+    kiChar->setValue(std::to_string(Ki));
+    kdChar->setValue(std::to_string(Kd));
+    baseSpeedChar->setValue(std::to_string(BaseSpeed));
+    maxSpeedChar->setValue(std::to_string(MaxSpeed));
+    turnSpeedChar->setValue(std::to_string(TurnSpeed));
+
+    pService->start();
+    NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
+    pAdvertising->setName(DEVICE_NAME);
+    pAdvertising->addServiceUUID(pService->getUUID());
+
+    pAdvertising->enableScanResponse(true);
+    pAdvertising->start();
+    Serial.println("BLE Service started, waiting for connections...");
+}
+
 void setup() {
     pixels.begin();
     Serial.begin(115200);
@@ -67,10 +124,10 @@ void setup() {
     pinMode(LEFT_MOTOR_BACKWARD, OUTPUT);
     pinMode(RIGHT_MOTOR_FORWARD, OUTPUT);
     pinMode(RIGHT_MOTOR_BACKWARD, OUTPUT);
-    digitalWrite(LEFT_MOTOR_FORWARD, LOW);
-    digitalWrite(LEFT_MOTOR_BACKWARD, LOW);
-    digitalWrite(RIGHT_MOTOR_FORWARD, LOW);
-    digitalWrite(RIGHT_MOTOR_BACKWARD, LOW);
+    analogWrite(LEFT_MOTOR_FORWARD, 0);
+    analogWrite(LEFT_MOTOR_BACKWARD, 0);
+    analogWrite(RIGHT_MOTOR_FORWARD, 0);
+    analogWrite(RIGHT_MOTOR_BACKWARD, 0);
     analogReadResolution(12);
 
     qtr.setTypeAnalog();
@@ -90,9 +147,9 @@ void setup() {
 
     Serial.println(as5600_left.getAddress());
     Serial.println(as5600_right.getAddress());
-    Serial.print(String(LeftEncoderStatus) + " " + String(RightEncoderStatus));
-    calibrate();
-    ready = 1;
+    Serial.println(String(LeftEncoderStatus) + " " + String(RightEncoderStatus));
+
+    setupBLE();
 }
 
 int lastError = 0;
@@ -104,7 +161,37 @@ int lost_sensors;
 int last_detection_time = 0;
 
 void loop() {
+    if (calibrateChar->getValue() == "1") {
+        calibrate();
+        calibrateChar->setValue("0");
+    }
+
+    if (startStopChar->getValue() == "1") {
+        ready = 1;
+    } else if (startStopChar->getValue() == "0") {
+        ready = 0;
+    }
+
     int position = qtr.readLineBlack(sensorValues);
+
+    // Aktualizacja parametrów z BLE
+    if (kpChar->getValue().length() > 0) Kp = std::stof(kpChar->getValue());
+    if (kiChar->getValue().length() > 0) Ki = std::stof(kiChar->getValue());
+    if (kdChar->getValue().length() > 0) Kd = std::stof(kdChar->getValue());
+    if (baseSpeedChar->getValue().length() > 0) BaseSpeed = std::stof(baseSpeedChar->getValue());
+    if (maxSpeedChar->getValue().length() > 0) MaxSpeed = std::stof(maxSpeedChar->getValue());
+    if (turnSpeedChar->getValue().length() > 0) TurnSpeed = std::stof(turnSpeedChar->getValue());
+
+    positionChar->setValue(std::to_string(position).c_str());
+    positionChar->notify();
+
+    // Przygotowanie i wysłanie danych czujników
+    String sensorData = String(position);
+    for(int i = 0; i < NUM_SENSORS; i++){
+        sensorData += "," + String(sensorValues[i]);
+    }
+    sensorDataChar->setValue(sensorData.c_str());
+    sensorDataChar->notify();
 
     if (sensorValues[0] >= 800 && sensorValues[NUM_SENSORS-1] < 800) {
         if (last_sighted != 1 && millis() - last_detection_time >= 100) {
