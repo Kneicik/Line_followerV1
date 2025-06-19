@@ -13,10 +13,10 @@
 
 #define NUM_SENSORS  8    
 #define EMITTER_PIN   16     
-#define LEFT_MOTOR_FORWARD 12
-#define LEFT_MOTOR_BACKWARD 11
-#define RIGHT_MOTOR_FORWARD 14
-#define RIGHT_MOTOR_BACKWARD 13
+#define LEFT_MOTOR_FORWARD 14
+#define LEFT_MOTOR_BACKWARD 13
+#define RIGHT_MOTOR_FORWARD 12
+#define RIGHT_MOTOR_BACKWARD 11
 #define NEOPIXEL_PIN 48
 #define NUM_PIXELS 1
 
@@ -25,19 +25,16 @@
 float Kp = 0.5; 
 float Ki = 0.0;  
 float Kd = 5;
-float MaxSpeed = 80; 
-float BaseSpeed = 50;
-float TurnSpeed = 70;
+float Speed = 50;
+float TurnSpeed = 50;
 
 static NimBLEServer* pServer;
 NimBLECharacteristic* kpChar;
 NimBLECharacteristic* kiChar;
 NimBLECharacteristic* kdChar;
-NimBLECharacteristic* baseSpeedChar;
-NimBLECharacteristic* maxSpeedChar;
+NimBLECharacteristic* speedChar; // Add this for BLE
 NimBLECharacteristic* turnSpeedChar;
 NimBLECharacteristic* sensorDataChar;
-NimBLECharacteristic* positionChar;
 NimBLECharacteristic* calibrateChar;
 NimBLECharacteristic* startStopChar;
 
@@ -59,20 +56,25 @@ int ready = 0;
 Adafruit_NeoPixel pixels(NUM_PIXELS, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
 void calibrate(){
-  qtr.resetCalibration();
-  for (uint16_t i = 0; i < 400; i++){
-    qtr.calibrate();
-  }
+    Serial.println("Calibrating sensors...");
+    qtr.resetCalibration();
+    for (uint16_t i = 0; i < 400; i++){
+        qtr.calibrate();
+    }
+    for (uint8_t i = 0; i < NUM_SENSORS; i++){
+        Serial.print(qtr.calibrationOn.minimum[i]);
+        Serial.print(' ');
+    }
 }
 
 void setMotor(int pwm, int in1, int in2) {
-  if (pwm > 0) {
-    analogWrite(in1, pwm);
-    analogWrite(in2, 0);
-  } else {
-    analogWrite(in1, 0);
-    analogWrite(in2, -pwm);
-  }
+    if (pwm > 0) {
+        analogWrite(in1, pwm);
+        analogWrite(in2, 0);
+    } else {
+        analogWrite(in1, 0);
+        analogWrite(in2, -pwm);
+    }
 }
 
 void setupBLE() {
@@ -84,27 +86,27 @@ void setupBLE() {
     NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_YESNO);
 
     pServer = NimBLEDevice::createServer();
-    // pServer->setCallbacks(&serverCallbacks);
     NimBLEService* pService = pServer->createService("12345678-1234-1234-1234-1234567890ab");
 
     kpChar = pService->createCharacteristic("0001", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
     kiChar = pService->createCharacteristic("0002", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
     kdChar = pService->createCharacteristic("0003", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
-    baseSpeedChar = pService->createCharacteristic("0004", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
-    maxSpeedChar = pService->createCharacteristic("0005", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+    speedChar = pService->createCharacteristic("0004", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
     turnSpeedChar = pService->createCharacteristic("0006", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
     sensorDataChar = pService->createCharacteristic("0007", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
-    positionChar = pService->createCharacteristic("0008", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
 
-    calibrateChar = pService->createCharacteristic("0009", NIMBLE_PROPERTY::WRITE);
-    startStopChar = pService->createCharacteristic("000A", NIMBLE_PROPERTY::WRITE);
+    calibrateChar = pService->createCharacteristic("0009", NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::READ);
+    calibrateChar->setValue("0");
+
+    startStopChar = pService->createCharacteristic("000A", NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::READ);
 
     kpChar->setValue(std::to_string(Kp));
     kiChar->setValue(std::to_string(Ki));
     kdChar->setValue(std::to_string(Kd));
-    baseSpeedChar->setValue(std::to_string(BaseSpeed));
-    maxSpeedChar->setValue(std::to_string(MaxSpeed));
+    speedChar->setValue(std::to_string(Speed));
     turnSpeedChar->setValue(std::to_string(TurnSpeed));
+    calibrateChar->setValue("0");
+    startStopChar->setValue("0");
 
     pService->start();
     NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
@@ -131,7 +133,8 @@ void setup() {
     analogReadResolution(12);
 
     qtr.setTypeAnalog();
-    qtr.setSensorPins((const uint8_t[]){ 9, 3, 8, 6, 10, 5, 4, 7}, NUM_SENSORS);
+    // qtr.setSensorPins((const uint8_t[]){ 9, 3, 8, 6, 10, 5, 4, 7}, NUM_SENSORS);
+    qtr.setSensorPins((const uint8_t[]){ 7, 4, 5, 10, 6, 8, 3, 9}, NUM_SENSORS);
     qtr.setEmitterPin(EMITTER_PIN);
 
     I2C_1.begin(SDA_1, SCL_1, 100000);
@@ -159,11 +162,24 @@ int last_sighted = 0;
 int lost;
 int lost_sensors;
 int last_detection_time = 0;
+int sumError = 0;
+
+unsigned long lastNotifyTime = 0;
 
 void loop() {
-    if (calibrateChar->getValue() == "1") {
-        calibrate();
-        calibrateChar->setValue("0");
+    int position = qtr.readLineBlack(sensorValues);
+
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastNotifyTime >= 200) {
+        lastNotifyTime = currentMillis;
+
+        // Przygotowanie i wysłanie danych czujników
+        String sensorData = String(position);
+        for(int i = 0; i < NUM_SENSORS; i++){
+            sensorData += "," + String(sensorValues[i]);
+        }
+        sensorDataChar->setValue(sensorData.c_str());
+        sensorDataChar->notify();
     }
 
     if (startStopChar->getValue() == "1") {
@@ -172,26 +188,17 @@ void loop() {
         ready = 0;
     }
 
-    int position = qtr.readLineBlack(sensorValues);
+    if (calibrateChar->getValue() == "1") {
+        calibrate();
+        calibrateChar->setValue("0");
+    }
 
     // Aktualizacja parametrów z BLE
     if (kpChar->getValue().length() > 0) Kp = std::stof(kpChar->getValue());
     if (kiChar->getValue().length() > 0) Ki = std::stof(kiChar->getValue());
     if (kdChar->getValue().length() > 0) Kd = std::stof(kdChar->getValue());
-    if (baseSpeedChar->getValue().length() > 0) BaseSpeed = std::stof(baseSpeedChar->getValue());
-    if (maxSpeedChar->getValue().length() > 0) MaxSpeed = std::stof(maxSpeedChar->getValue());
+    if (speedChar->getValue().length() > 0) Speed = std::stof(speedChar->getValue());
     if (turnSpeedChar->getValue().length() > 0) TurnSpeed = std::stof(turnSpeedChar->getValue());
-
-    positionChar->setValue(std::to_string(position).c_str());
-    positionChar->notify();
-
-    // Przygotowanie i wysłanie danych czujników
-    String sensorData = String(position);
-    for(int i = 0; i < NUM_SENSORS; i++){
-        sensorData += "," + String(sensorValues[i]);
-    }
-    sensorDataChar->setValue(sensorData.c_str());
-    sensorDataChar->notify();
 
     if (sensorValues[0] >= 800 && sensorValues[NUM_SENSORS-1] < 800) {
         if (last_sighted != 1 && millis() - last_detection_time >= 100) {
@@ -222,20 +229,18 @@ void loop() {
 
     int error = position - 3500;
 
-    int motorSpeed = Kp * error + Kd * (error - lastError);
+    sumError += error; // accumulate error for integral term
+    int correction = Kp * error + Kd * (error - lastError) + Ki * sumError;
     lastError = error;
 
-    leftPWM  = constrain(BaseSpeed - motorSpeed, -MaxSpeed, MaxSpeed);
-    rightPWM = constrain(BaseSpeed + motorSpeed, -MaxSpeed, MaxSpeed);
-
-    setMotor(leftPWM,  LEFT_MOTOR_FORWARD,  LEFT_MOTOR_BACKWARD);
-    setMotor(rightPWM, RIGHT_MOTOR_FORWARD, RIGHT_MOTOR_BACKWARD); 
+    leftPWM  = constrain(Speed - correction, Speed/10, Speed);
+    rightPWM = constrain(Speed + correction, Speed/10, Speed);
 
     if (ready == 1) {
-        if (lost == 1 && last_sighted == 1) {
+        if (lost == 1 && last_sighted == 2) {
             setMotor(-TurnSpeed, LEFT_MOTOR_FORWARD, LEFT_MOTOR_BACKWARD);
             setMotor(TurnSpeed, RIGHT_MOTOR_FORWARD, RIGHT_MOTOR_BACKWARD);
-        } else if (lost == 1 && last_sighted == 2) {
+        } else if (lost == 1 && last_sighted == 1) {
             setMotor(TurnSpeed, LEFT_MOTOR_FORWARD, LEFT_MOTOR_BACKWARD);
             setMotor(-TurnSpeed, RIGHT_MOTOR_FORWARD, RIGHT_MOTOR_BACKWARD);
         } else {
@@ -246,4 +251,5 @@ void loop() {
         setMotor(0, LEFT_MOTOR_FORWARD, LEFT_MOTOR_BACKWARD);
         setMotor(0, RIGHT_MOTOR_FORWARD, RIGHT_MOTOR_BACKWARD);
     }
+    delay(10);
 }
