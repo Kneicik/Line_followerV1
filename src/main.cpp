@@ -1,3 +1,5 @@
+#include <string>
+#include <Ticker.h>
 #include <Arduino.h>
 #include <Adafruit_NeoPixel.h>
 #include <QTRSensors.h>
@@ -13,8 +15,8 @@
 
 #define NUM_SENSORS  8    
 #define EMITTER_PIN   16     
-#define LEFT_MOTOR_FORWARD 14
-#define LEFT_MOTOR_BACKWARD 13
+#define LEFT_MOTOR_FORWARD 13
+#define LEFT_MOTOR_BACKWARD 14
 #define RIGHT_MOTOR_FORWARD 12
 #define RIGHT_MOTOR_BACKWARD 11
 #define NEOPIXEL_PIN 48
@@ -42,6 +44,16 @@ float lost_threshold = 450;
 float LeftEncoderStatus = 0;
 float RightEncoderStatus = 0;
 
+int32_t leftRawLast = 0;
+int32_t rightRawLast = 0;
+int32_t leftCumulativeTicks = 0;
+int32_t rightCumulativeTicks = 0;
+
+Ticker encoderTicker;
+volatile int rawLeft = 0;
+volatile int rawRight = 0;
+
+
 TwoWire I2C_1(0);
 TwoWire I2C_2(1);
 
@@ -56,14 +68,14 @@ int ready = 0;
 Adafruit_NeoPixel pixels(NUM_PIXELS, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
 void calibrate(){
-    Serial.println("Calibrating sensors...");
+    // Serial.println("Calibrating sensors...");
     qtr.resetCalibration();
     for (uint16_t i = 0; i < 400; i++){
         qtr.calibrate();
     }
     for (uint8_t i = 0; i < NUM_SENSORS; i++){
-        Serial.print(qtr.calibrationOn.minimum[i]);
-        Serial.print(' ');
+        // Serial.print(qtr.calibrationOn.minimum[i]);
+        // Serial.print(' ');
     }
 }
 
@@ -94,10 +106,7 @@ void setupBLE() {
     speedChar = pService->createCharacteristic("0004", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
     turnSpeedChar = pService->createCharacteristic("0006", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
     sensorDataChar = pService->createCharacteristic("0007", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
-
     calibrateChar = pService->createCharacteristic("0009", NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::READ);
-    calibrateChar->setValue("0");
-
     startStopChar = pService->createCharacteristic("000A", NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::READ);
 
     kpChar->setValue(std::to_string(Kp));
@@ -116,6 +125,11 @@ void setupBLE() {
     pAdvertising->enableScanResponse(true);
     pAdvertising->start();
     Serial.println("BLE Service started, waiting for connections...");
+}
+
+void readEncoders() {
+    rawLeft = as5600_left.readAngle();
+    rawRight = as5600_right.readAngle();
 }
 
 void setup() {
@@ -137,8 +151,8 @@ void setup() {
     qtr.setSensorPins((const uint8_t[]){ 7, 4, 5, 10, 6, 8, 3, 9}, NUM_SENSORS);
     qtr.setEmitterPin(EMITTER_PIN);
 
-    I2C_1.begin(SDA_1, SCL_1, 100000);
-    I2C_2.begin(SDA_2, SCL_2, 100000);
+    I2C_1.begin(SDA_1, SCL_1, 400000);
+    I2C_2.begin(SDA_2, SCL_2, 400000);
 
     as5600_left.begin(LEFT_DIR_PIN);
     as5600_right.begin(RIGHT_DIR_PIN);
@@ -152,7 +166,11 @@ void setup() {
     Serial.println(as5600_right.getAddress());
     Serial.println(String(LeftEncoderStatus) + " " + String(RightEncoderStatus));
 
+    leftRawLast = as5600_left.readAngle();
+    rightRawLast = as5600_right.readAngle();
+
     setupBLE();
+    encoderTicker.attach_ms(5, readEncoders);
 }
 
 int lastError = 0;
@@ -167,13 +185,32 @@ int sumError = 0;
 unsigned long lastNotifyTime = 0;
 
 void loop() {
+    static unsigned long lastEncoderLog = 0;
+
+    int localRawLeft = rawLeft;
+    int localRawRight = rawRight;
+
+    int deltaLeft = (localRawLeft - leftRawLast + 6144) % 4096 - 2048;
+    int deltaRight = (localRawRight - rightRawLast + 6144) % 4096 - 2048;
+
+    leftCumulativeTicks += deltaLeft;
+    rightCumulativeTicks += deltaRight;
+
+    leftRawLast = localRawLeft;
+    rightRawLast = localRawRight;
+
+    float wheelCircumference = 3.1416 * 29.0; // in mm
+    float leftDistance = (leftCumulativeTicks / 4096.0 / 10.0) * wheelCircumference;
+    float rightDistance = (rightCumulativeTicks / 4096.0 / 10.0) * wheelCircumference;
+
+    Serial.printf("%lu, %.2f, %.2f, %ld, %ld\n", millis(), leftDistance, rightDistance);
+
     int position = qtr.readLineBlack(sensorValues);
 
     unsigned long currentMillis = millis();
     if (currentMillis - lastNotifyTime >= 200) {
         lastNotifyTime = currentMillis;
 
-        // Przygotowanie i wysłanie danych czujników
         String sensorData = String(position);
         for(int i = 0; i < NUM_SENSORS; i++){
             sensorData += "," + String(sensorValues[i]);
@@ -184,6 +221,7 @@ void loop() {
 
     if (startStopChar->getValue() == "1") {
         ready = 1;
+        sumError = 0;
     } else if (startStopChar->getValue() == "0") {
         ready = 0;
     }
@@ -251,5 +289,4 @@ void loop() {
         setMotor(0, LEFT_MOTOR_FORWARD, LEFT_MOTOR_BACKWARD);
         setMotor(0, RIGHT_MOTOR_FORWARD, RIGHT_MOTOR_BACKWARD);
     }
-    delay(10);
 }
