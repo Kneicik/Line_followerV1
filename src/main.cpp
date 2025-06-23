@@ -4,6 +4,8 @@
 #include <Adafruit_NeoPixel.h>
 #include <QTRSensors.h>
 #include <AS5600.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
 #include "NimBLEDevice.h"
 
 #define SDA_1 17
@@ -59,6 +61,8 @@ TwoWire I2C_2(1);
 
 AS5600 as5600_left(&I2C_1); // left motor
 AS5600 as5600_right(&I2C_2); // right motor
+
+Adafruit_MPU6050 mpu;
 
 QTRSensors qtr;
 
@@ -169,6 +173,17 @@ void setup() {
     leftRawLast = as5600_left.readAngle();
     rightRawLast = as5600_right.readAngle();
 
+    if (!mpu.begin(MPU6050_I2CADDR_DEFAULT, &I2C_2)) {
+        Serial.println("Failed to find MPU6050 chip");
+        while (1) {
+            delay(10);
+        }
+    }
+
+    mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+    mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+    mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+
     setupBLE();
     encoderTicker.attach_ms(5, readEncoders);
 }
@@ -185,6 +200,8 @@ int sumError = 0;
 unsigned long lastNotifyTime = 0;
 
 void loop() {
+    int position = qtr.readLineBlack(sensorValues);
+
     static unsigned long lastEncoderLog = 0;
 
     int localRawLeft = rawLeft;
@@ -203,9 +220,8 @@ void loop() {
     float leftDistance = (leftCumulativeTicks / 4096.0 / 10.0) * wheelCircumference;
     float rightDistance = (rightCumulativeTicks / 4096.0 / 10.0) * wheelCircumference;
 
-    Serial.printf("%lu, %.2f, %.2f, %ld, %ld\n", millis(), leftDistance, rightDistance);
-
-    int position = qtr.readLineBlack(sensorValues);
+    sensors_event_t a, g, temp;
+    mpu.getEvent(&a, &g, &temp);
 
     unsigned long currentMillis = millis();
     if (currentMillis - lastNotifyTime >= 200) {
@@ -289,4 +305,21 @@ void loop() {
         setMotor(0, LEFT_MOTOR_FORWARD, LEFT_MOTOR_BACKWARD);
         setMotor(0, RIGHT_MOTOR_FORWARD, RIGHT_MOTOR_BACKWARD);
     }
+
+    char line[200];
+    snprintf(line, sizeof(line), "%lu\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%d",
+        millis(), leftDistance, rightDistance, a.acceleration.x, a.acceleration.y,
+        g.gyro.x, g.gyro.y, position);
+    Serial.print(line);
+
+    for (int i = 0; i < NUM_SENSORS; i++) {
+        Serial.print('\t');
+        Serial.print(sensorValues[i]);
+    }
+
+    snprintf(line, sizeof(line), "\t%d\t%d\t%d\t%d\t%d\t%.2f\t%.2f\t%.2f\t%.2f\t%d\n",
+        error, leftPWM, rightPWM, lost, last_sighted,
+        Kp, Ki, Kd, Speed, ready);
+    Serial.print(line);
+    delay(10);
 }
