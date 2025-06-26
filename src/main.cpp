@@ -3,7 +3,6 @@
 #include <Arduino.h>
 #include <Adafruit_NeoPixel.h>
 #include <QTRSensors.h>
-#include <AS5600.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 #include "NimBLEDevice.h"
@@ -17,10 +16,10 @@
 
 #define NUM_SENSORS  8    
 #define EMITTER_PIN   16     
-#define LEFT_MOTOR_FORWARD 13
-#define LEFT_MOTOR_BACKWARD 14
-#define RIGHT_MOTOR_FORWARD 12
-#define RIGHT_MOTOR_BACKWARD 11
+#define LEFT_MOTOR_FORWARD 14
+#define LEFT_MOTOR_BACKWARD 13
+#define RIGHT_MOTOR_FORWARD 11
+#define RIGHT_MOTOR_BACKWARD 12
 #define NEOPIXEL_PIN 48
 #define NUM_PIXELS 1
 
@@ -32,35 +31,35 @@ float Kd = 5;
 float Speed = 50;
 float TurnSpeed = 50;
 
+#define ENC1_A 35
+#define ENC1_B 36
+#define ENC2_A 1
+#define ENC2_B 21
+
+// Gear ratio n: 5.47:1 14 84 impulses per revolution
+const float wheelCircumference = 3.1416 * 29.0; // mm
+const int ENCODER_IMPULSES_PER_REV = 84;
+// const float GEAR_RATIO = 5.47; 
+float distancePerPulse = wheelCircumference / ENCODER_IMPULSES_PER_REV * 1.096;
+
+volatile int32_t encoderLeftCount = 0;
+volatile int32_t encoderRightCount = 0;
+
 static NimBLEServer* pServer;
 NimBLECharacteristic* kpChar;
 NimBLECharacteristic* kiChar;
 NimBLECharacteristic* kdChar;
-NimBLECharacteristic* speedChar; // Add this for BLE
+NimBLECharacteristic* speedChar;
 NimBLECharacteristic* turnSpeedChar;
 NimBLECharacteristic* sensorDataChar;
 NimBLECharacteristic* calibrateChar;
 NimBLECharacteristic* startStopChar;
 
-float lost_threshold = 450;
+float lost_threshold = 750;
 float LeftEncoderStatus = 0;
 float RightEncoderStatus = 0;
 
-int32_t leftRawLast = 0;
-int32_t rightRawLast = 0;
-int32_t leftCumulativeTicks = 0;
-int32_t rightCumulativeTicks = 0;
-
-Ticker encoderTicker;
-volatile int rawLeft = 0;
-volatile int rawRight = 0;
-
-
-TwoWire I2C_1(0);
 TwoWire I2C_2(1);
-
-AS5600 as5600_left(&I2C_1); // left motor
-AS5600 as5600_right(&I2C_2); // right motor
 
 Adafruit_MPU6050 mpu;
 
@@ -70,6 +69,20 @@ uint16_t sensorValues[NUM_SENSORS];
 int ready = 0;
 
 Adafruit_NeoPixel pixels(NUM_PIXELS, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
+
+void IRAM_ATTR encoder1ISR() {
+  bool a = digitalRead(ENC1_A);
+  bool b = digitalRead(ENC1_B);
+  if (a == b) encoderLeftCount++;
+  else encoderLeftCount--;
+}
+
+void IRAM_ATTR encoder2ISR() {
+  bool a = digitalRead(ENC2_A);
+  bool b = digitalRead(ENC2_B);
+  if (a == b) encoderRightCount++;
+  else encoderRightCount--;
+}
 
 void calibrate(){
     // Serial.println("Calibrating sensors...");
@@ -131,11 +144,6 @@ void setupBLE() {
     Serial.println("BLE Service started, waiting for connections...");
 }
 
-void readEncoders() {
-    rawLeft = as5600_left.readAngle();
-    rawRight = as5600_right.readAngle();
-}
-
 void setup() {
     pixels.begin();
     Serial.begin(115200);
@@ -155,23 +163,7 @@ void setup() {
     qtr.setSensorPins((const uint8_t[]){ 7, 4, 5, 10, 6, 8, 3, 9}, NUM_SENSORS);
     qtr.setEmitterPin(EMITTER_PIN);
 
-    I2C_1.begin(SDA_1, SCL_1, 400000);
     I2C_2.begin(SDA_2, SCL_2, 400000);
-
-    as5600_left.begin(LEFT_DIR_PIN);
-    as5600_right.begin(RIGHT_DIR_PIN);
-    as5600_left.setDirection(AS5600_COUNTERCLOCK_WISE);
-    as5600_right.setDirection(AS5600_CLOCK_WISE);
-
-    LeftEncoderStatus = as5600_left.isConnected();
-    RightEncoderStatus = as5600_right.isConnected();
-
-    Serial.println(as5600_left.getAddress());
-    Serial.println(as5600_right.getAddress());
-    Serial.println(String(LeftEncoderStatus) + " " + String(RightEncoderStatus));
-
-    leftRawLast = as5600_left.readAngle();
-    rightRawLast = as5600_right.readAngle();
 
     if (!mpu.begin(MPU6050_I2CADDR_DEFAULT, &I2C_2)) {
         Serial.println("Failed to find MPU6050 chip");
@@ -184,8 +176,18 @@ void setup() {
     mpu.setGyroRange(MPU6050_RANGE_500_DEG);
     mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
 
+    pinMode(ENC1_A, INPUT_PULLUP);
+    pinMode(ENC1_B, INPUT_PULLUP);
+    pinMode(ENC2_A, INPUT_PULLUP);
+    pinMode(ENC2_B, INPUT_PULLUP);
+
+    attachInterrupt(digitalPinToInterrupt(ENC1_A), encoder1ISR, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(ENC2_A), encoder2ISR, CHANGE);
+
     setupBLE();
-    encoderTicker.attach_ms(5, readEncoders);
+
+    // Write header for serial output
+    Serial.println("millis\tleftDistance\trightDistance\taccel.x\taccel.y\tgyro.x\tgyro.y\tposition\tsensor1\tsensor2\tsensor3\tsensor4\tsensor5\tsensor6\tsensor7\tsensor8\terror\tleftPWM\trightPWM\tlost\tlast_sighted\tKp\tKi\tKd\tSpeed\tready");
 }
 
 int lastError = 0;
@@ -196,29 +198,16 @@ int lost;
 int lost_sensors;
 int last_detection_time = 0;
 int sumError = 0;
+float leftDistance = 0;
+float rightDistance = 0;
 
 unsigned long lastNotifyTime = 0;
 
 void loop() {
     int position = qtr.readLineBlack(sensorValues);
 
-    static unsigned long lastEncoderLog = 0;
-
-    int localRawLeft = rawLeft;
-    int localRawRight = rawRight;
-
-    int deltaLeft = (localRawLeft - leftRawLast + 6144) % 4096 - 2048;
-    int deltaRight = (localRawRight - rightRawLast + 6144) % 4096 - 2048;
-
-    leftCumulativeTicks += deltaLeft;
-    rightCumulativeTicks += deltaRight;
-
-    leftRawLast = localRawLeft;
-    rightRawLast = localRawRight;
-
-    float wheelCircumference = 3.1416 * 29.0; // in mm
-    float leftDistance = (leftCumulativeTicks / 4096.0 / 10.0) * wheelCircumference;
-    float rightDistance = (rightCumulativeTicks / 4096.0 / 10.0) * wheelCircumference;
+    leftDistance = encoderLeftCount * distancePerPulse;
+    rightDistance = encoderRightCount * distancePerPulse;
 
     sensors_event_t a, g, temp;
     mpu.getEvent(&a, &g, &temp);
