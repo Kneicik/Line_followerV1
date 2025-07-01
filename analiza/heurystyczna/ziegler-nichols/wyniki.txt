@@ -1,0 +1,15 @@
+Kp = 0.27
+
+Średni okres oscylacji: 510 ms
+
+Kp ≈ 0.6 × Ku = 0.6 × 0.27 = 0.162
+Ki ≈ 2 × Kp / Tu = 2 × 0.162 / 0.51 ≈ 0.635
+Kd ≈ Kp × Tu / 8 = 0.162 × 0.51 / 8 ≈ 0.0103
+
+czas = 50075 - 31218 = 18857ms
+
+Średni błąd = 882.24
+
+Wariancja = 683176.83
+
+lost = 245

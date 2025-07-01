@@ -1,0 +1,9 @@
+Kp=0.300000 
+Ki=0.010000 
+Kd=1.500000
+
+czas przejazdu = 55449 - 34891 = 20558
+
+Total lost: 635 / 3 =  212
+Average absolute error where lost == 0: 1034.21
+Sample variance of absolute error where lost == 0: 1180090.68

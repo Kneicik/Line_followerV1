@@ -1,0 +1,26 @@
+Autotune: Twiddle start
+Twiddle iter 0 param 0 Kp=0.300000 Ki=0.000000 Kd=1.500000 best_err=143.024002
+Twiddle iter 0 param 1 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 0 param 2 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 1 param 0 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 1 param 1 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 1 param 2 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 2 param 0 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 2 param 1 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 2 param 2 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 3 param 0 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 3 param 1 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 3 param 2 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 4 param 0 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 4 param 1 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 4 param 2 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 5 param 0 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 5 param 1 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 5 param 2 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 6 param 0 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 6 param 1 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 6 param 2 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 7 param 0 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 7 param 1 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Twiddle iter 7 param 2 Kp=0.300000 Ki=0.010000 Kd=1.500000 best_err=143.024002
+Autotune zakończone. Kp=0.300000 Ki=0.010000 Kd=1.500000
